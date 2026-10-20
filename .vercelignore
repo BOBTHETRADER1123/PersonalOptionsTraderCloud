@@ -1,0 +1,12 @@
+backend/
+outputs/
+work/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+.env
+**/.env
+*.db
+*.db-*
+node-v*-win-x64/

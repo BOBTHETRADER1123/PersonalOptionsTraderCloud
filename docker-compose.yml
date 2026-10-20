@@ -1,0 +1,45 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://options:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/options
+      DATA_DIR: /data/OptionsTraderData
+      COOKIE_SECURE: "true"
+    volumes:
+      - trader_data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    expose: ["8000"]
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: options
+      POSTGRES_USER: options
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U options -d options"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN to a DNS name pointing at this server}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+volumes:
+  trader_data:
+  postgres_data:
+  caddy_data:
+  caddy_config:

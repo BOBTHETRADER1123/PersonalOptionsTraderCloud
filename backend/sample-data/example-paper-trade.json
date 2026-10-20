@@ -1,0 +1,13 @@
+{
+  "description": "Example request for a paper-only NIFTY call debit spread. Values are examples, not current contracts or prices.",
+  "request": {
+    "action": "NEW_TRADE",
+    "brokers": ["Dhan", "Kotak Neo", "5paisa"],
+    "strategy": "Bull Call Spread",
+    "underlying": "NIFTY",
+    "legs": [
+      {"underlying": "NIFTY", "expiry": "2030-01-31", "strike": 25000, "option_type": "CE", "side": "BUY", "lots": 1, "lot_size": 25, "entry_price": 120},
+      {"underlying": "NIFTY", "expiry": "2030-01-31", "strike": 25200, "option_type": "CE", "side": "SELL", "lots": 1, "lot_size": 25, "entry_price": 50}
+    ]
+  }
+}
