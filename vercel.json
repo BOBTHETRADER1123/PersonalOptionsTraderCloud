@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://YOUR_BACKEND_DOMAIN/api/:path*"
+      "destination": "https://libzw8xd976f.ramnaymcloud.com/api/:path*"
     }
   ],
   "headers": [

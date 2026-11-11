@@ -1,4 +1,5 @@
-const CACHE='personal-options-trader-shell-v1';
-self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(['/','/manifest.webmanifest','/icon.svg']))));
-self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key))))));
-self.addEventListener('fetch',event=>{const request=event.request;if(request.method!=='GET'||new URL(request.url).pathname.startsWith('/api/'))return;event.respondWith(fetch(request).then(response=>{if(response.ok&&new URL(request.url).origin===location.origin){const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(request,copy))}return response}).catch(()=>caches.match(request).then(cached=>cached||caches.match('/'))))});
+const CACHE='pot-shell-v1';
+self.addEventListener('install',()=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+// Financial data and authenticated responses are deliberately never cached.
+self.addEventListener('fetch',e=>{if(e.request.mode==='navigate')e.respondWith(fetch(e.request).catch(()=>new Response('<!doctype html><title>Offline</title><body style="background:#101512;color:#e7eee8;font:18px system-ui;padding:40px"><h1>You’re offline</h1><p>Reconnect to view your paper trades. Your server keeps the saved records.</p><button onclick="location.reload()">Try again</button></body>',{headers:{'Content-Type':'text/html'}})));});

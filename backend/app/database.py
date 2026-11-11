@@ -1,31 +1,115 @@
+"""One transactional journal shared by paper execution, feed capture and exports."""
+import os
+import sqlite3
+import time
 from pathlib import Path
-from sqlalchemy import create_engine
+from datetime import datetime, timezone
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, event
+from sqlalchemy.exc import (DBAPIError, DisconnectionError, InterfaceError,
+                            OperationalError, SQLAlchemyError, TimeoutError)
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from .config import settings
 
+ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(ROOT / '.env')
+DATA = Path(os.getenv('DATA_DIR', str(ROOT / 'OptionsTraderData')))
+DATA.mkdir(parents=True, exist_ok=True)
+DATABASE_URL = os.getenv('DATABASE_URL', f'sqlite:///{(DATA / "trader.db").as_posix()}')
+if DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql+psycopg://', 1)
+elif DATABASE_URL.startswith('postgresql://'):
+    DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg://', 1)
+_pool_options = ({'pool_size': max(1, int(os.getenv('DB_POOL_SIZE', '2'))),
+                  'max_overflow': max(0, int(os.getenv('DB_MAX_OVERFLOW', '1'))),
+                  'pool_timeout': 10, 'pool_recycle': 300, 'pool_use_lifo': True}
+                 if not DATABASE_URL.startswith('sqlite') else {})
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, **_pool_options,
+    connect_args=({'check_same_thread': False, 'timeout': 30} if DATABASE_URL.startswith('sqlite') else
+                  {'connect_timeout': 10, 'options': '-c statement_timeout=15000 -c lock_timeout=10000'}))
+def configure_sqlite(target, journal_mode=None):
+    """Disable sqlite3 legacy transactions so SAVEPOINT release cannot commit early."""
+    mode=(journal_mode or os.getenv('SQLITE_JOURNAL_MODE','WAL')).upper()
+    if mode not in {'WAL','DELETE'}:raise ValueError('Unsupported SQLite journal mode.')
+    @event.listens_for(target, 'connect')
+    def sqlite_pragmas(connection, _):
+        connection.isolation_level=None
+        connection.execute('PRAGMA journal_mode='+mode)
+        connection.execute('PRAGMA busy_timeout=30000')
+        connection.execute('PRAGMA synchronous=FULL')
+        connection.execute('PRAGMA foreign_keys=ON')
+    @event.listens_for(target, 'begin')
+    def sqlite_begin(connection):
+        connection.exec_driver_sql('BEGIN')
+
+if DATABASE_URL.startswith('sqlite'):
+    configure_sqlite(engine)
 
 class Base(DeclarativeBase):
     pass
 
+SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
-database_url = settings.database_url
-if database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql+psycopg://", 1)
-elif database_url.startswith("postgresql://"):
-    database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+def sqlite_error_code(error):
+    """Return the driver's extended code without exposing SQL or parameters."""
+    original = getattr(error, 'orig', error)
+    code = getattr(original, 'sqlite_errorcode', None)
+    return code if isinstance(code, int) else None
 
-connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-if database_url.startswith("sqlite"):
-    db_file = database_url.removeprefix("sqlite:///")
-    if db_file and db_file != ":memory:":
-        Path(db_file).parent.mkdir(parents=True, exist_ok=True)
-engine = create_engine(database_url, connect_args=connect_args, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+def is_sqlite_contention(error):
+    # WAL read-then-write conflicts report SQLITE_BUSY_SNAPSHOT (517), whose
+    # base code is BUSY (5). Waiting inside that transaction cannot fix it.
+    code = sqlite_error_code(error)
+    return code is not None and code & 0xff in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 
+def is_database_unavailable(error):
+    """Only connection/storage failures should take every API route offline."""
+    if is_sqlite_contention(error):
+        return False
+    code = sqlite_error_code(error)
+    if code is not None:
+        return code & 0xff in {
+            sqlite3.SQLITE_IOERR, sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_FULL,
+            sqlite3.SQLITE_CANTOPEN, sqlite3.SQLITE_PROTOCOL, sqlite3.SQLITE_NOTADB,
+        }
+    if isinstance(error, DBAPIError) and error.connection_invalidated:
+        return True
+    return isinstance(error, (OperationalError, InterfaceError, DisconnectionError, TimeoutError))
+
+def run_transaction(operation, session_factory=None, attempts=4):
+    """Retry an entire SQLite write on a fresh snapshot, never a failed Session.
+
+    Callers must keep irreversible work outside the operation. A successful
+    receipt commit can be followed by a separately retried valuation without
+    inserting the received price twice.
+    """
+    factory = session_factory or SessionLocal
+    for attempt in range(attempts):
+        with factory() as db:
+            try:
+                result = operation(db)
+                db.commit()
+                return result
+            except SQLAlchemyError as error:
+                # Invalidate the engine's in-memory marks as well as SQLite's
+                # stale read snapshot before creating the replacement Session.
+                db.rollback()
+                state = getattr(getattr(error, 'orig', None), 'sqlstate', '') or ''
+                retryable = (is_sqlite_contention(error) or state in {'40001', '40P01'} or
+                             (db.get_bind().dialect.name == 'postgresql' and is_database_unavailable(error)))
+                if not retryable or attempt + 1 == attempts:
+                    raise
+        time.sleep(.025 * (2 ** attempt))
+
+def utcnow():
+    return datetime.now(timezone.utc)
+
+def iso_now():
+    return utcnow().isoformat(timespec='microseconds')
 
 def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    with SessionLocal() as db:
+        try:
+            yield db
+        except Exception:
+            db.rollback()
+            raise

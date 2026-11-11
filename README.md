@@ -1,135 +1,56 @@
 # Personal Options Trader
 
-A mobile-friendly, paper-only options dashboard for index and MCX commodity options. The first release includes a FastAPI backend, React/TypeScript frontend, SQLite for local use, PostgreSQL deployment configuration, append-only quote journaling and one Excel workbook per simulated trade and broker.
+This is an update to the existing personal paper-trading app. It preserves working features and records. Only **Kotak Neo** is enabled for market data and new paper trades. Saved 5paisa and Dhan records remain historical; their integrations are disabled. Real broker order placement is disabled.
 
-For a step-by-step setup without command-line work, see [BEGINNER_DEPLOYMENT.md](BEGINNER_DEPLOYMENT.md). It deploys one shared backend/database and connects the Vercel website for phone and laptop access.
+## Current setup and deployment status
 
-## Safety and what is implemented
+The production deployment is **Vercel frontend + RamNaym server 1606 backend + SQLite at `/app/data/trading.db`** on the verified persistent volume. One asynchronous application worker owns market recording. The existing React/TypeScript frontend is retained.
 
-- Every order action in this release is a paper simulation. There is no live order submission client or endpoint. The “Live trading” panel stays disabled.
-- A new action can create a distinct simulation for any combination of Dhan, Kotak Neo and 5paisa, using one shared action ID and one trade ID per broker. Retries with the same idempotency key return the prior result.
-- Paper P&L uses weighted-average entry accounting. Long gross P&L is `(mark - average entry) × open lots × lot size`; short gross P&L is `(average entry - mark) × open lots × lot size`. Charges and configured slippage are shown separately and subtracted from net P&L.
-- The contract selector reads imported broker instrument-master CSV files. Choose the underlying, expiry, strike, call/put, side and number of lots from available contracts; strike, expiry and lot size are not typed manually. Enter a paper fill price yourself or use a fresh quote when the selected broker feed provides one.
-- Build a strategy from any combination of option legs, choose a built-in strategy label or name your own. The paper ledger tracks each trade's best and worst recorded net P&L and the quote timestamp when each occurred, including after a trade is closed. Times are displayed in India Standard Time; the workbook stores UTC timestamps.
-- The broker integrations are read-only market-data workers. They reconnect with backoff and rebuild subscriptions from the imported instrument master. They have not been verified against a real account in this workspace. Real quotes require your broker credentials, correct account permissions and a current instrument master.
-- Dhan's binary market feed parser in this release handles its documented ticker packet. Kotak Neo uses the maintained SFeed Python SDK. 5paisa uses the Xstream authenticated feed. Quote fields that a feed does not send remain blank; the app does not synthesize exchange events.
-- Market paper entries use the explicit fill price entered by you. A single-leg limit simulation stays pending until a fresh quote from the selected broker crosses its limit; you can cancel it. Multi-leg limit orders and partial fills are not implemented. This is a practical first release, not an exchange-certified trading system. Broker margin estimates, broker account margin, margin/hedge benefit, automated stop-loss/target, and real-account/API verification are not implemented. Do not use paper P&L as broker P&L.
+**Migration verified on 25 October 2026:** the public Vercel website now connects to RamNaym SQLite and reports database_ready=true. The approved laptop copy contains one owner, four saved sample trades, 78,172 original quote records and 104,612 original history rows. Owner sign-in through Vercel and an authenticated WebSocket were observed. A subsequent source-only redeploy and container restart retained the account and four trades; the private bootstrap payload is absent from the active image, and the worker limit remains one. Those migration checks do not prove broker feeds or Google uploads. Kotak MCX quote delivery was subsequently observed on 28 October; full live-load and recovery acceptance remains outstanding. Sample trades remain separate from genuine broker-data paper trades. The old Neon database and laptop source remain preserved.
 
-## Project layout
+Website: [personal-options-trader.vercel.app](https://personal-options-trader.vercel.app/). Private source: [GitHub repository](https://github.com/BOBTHETRADER1123/personal-options-trader). `http://127.0.0.1:8011` is an isolated laptop preview, not the public cloud service.
 
-```text
-backend/                 FastAPI, SQLAlchemy models, feed adapters, paper ledger and Excel export
-  app/brokers/            Independent Dhan, Kotak Neo and 5paisa read-only feed code
-  sample-data/            Example paper trade request (example contracts/prices only)
-  tests/                  P&L, adapter codec and paper-action tests
-frontend/                 React + TypeScript responsive PWA
-OptionsTraderData/        Created at runtime: journal and broker/year/month/trade workbooks
-start-windows.ps1         Local Windows setup and launch
-Dockerfile                Production image
-docker-compose.yml        PostgreSQL + app + Caddy TLS reverse proxy
-```
+## Start with these guides
 
-## Install and run on Windows
+- [Current RamNaym deployment and trial checks](docs/RAMNAYM-TRIAL.md)
+- [Broker connection methods and limitations](docs/BROKERS.md)
+- [Daily Excel Downloads and safe cloud cleanup](docs/DAILY-REPORTS.md)
+- [Live Google Sheets and separate Google account setup](docs/GOOGLE-SHEETS-LIVE.md)
+- [Google authorization and completed-trade archives](docs/GOOGLE-DRIVE-CLOUD.md)
+- [Actual automated test results and pending live checks](TEST-REPORT.md)
 
-1. Install Python 3.11 or newer and Node.js 20 or newer. During Python setup, enable the option to add Python to PATH.
-2. Extract the project into a normal user folder. Open that folder in File Explorer.
-3. Right-click `start-windows.ps1` and choose **Run with PowerShell**, or open PowerShell in this folder and run:
+## Current implemented workflows
 
-   ```powershell
-   Set-ExecutionPolicy -Scope Process Bypass
-   .\start-windows.ps1
-   ```
+- Owner authentication, secure sessions, protected APIs, independent broker prices and simulated fills.
+- Buying/selling options and futures, multi-leg strategies, partial exits, strategy payoff and estimated margin/charges. No real orders.
+- One-second captured P&L history with original quote times, stale/reused status, recording gaps and restart coordination. Production capture follows maintained verified exchange sessions.
+- All-time strategy and broker-execution counts, responsive dashboard, option chain and strategy builder.
+- Daily backend-generated XLSX, separate worksheets per broker trade, continued trade IDs across dates, large-file splitting, CSV.gz supplements and checksums.
+- Durable approximately five-second Google Sheets batches, verification before cursor advancement, upload retries and explicitly confirmed daily cloud cleanup. Google OAuth must be configured and authorized before these uploads work.
+- Container CPU/RAM, persistent-storage and queue monitoring. Dashboard/log alerts do not imply external email/SMS is configured.
+- Optional automatic archiving at 12 GiB: fresh verification of complete older daily Google archives before bounded local snapshot cleanup, with continuity anchors, active state and retained export files preserved. SQLite freed pages are reused; this does not clear the database.
+- Google account changes retain old remote files and previous synchronization metadata, then use new account-bound destinations. Google consent and live upload verification remain required.
 
-   The script creates a Python virtual environment, installs the listed packages, builds the frontend, starts the API and opens `http://127.0.0.1:8000`.
+Mocked tests are not proof of authenticated broker connectivity or a successful Google account connection. No live broker integration is marked passed until the owner's permitted credentials have actually been tested. Sample mode is explicitly synthetic and must not be mistaken for live prices.
 
-4. The first run creates `backend/.env` from `backend/.env.example`. Stop the app, edit that file, set a long unique `APP_SECRET`, and change `APP_PASSWORD`. Restart the app. The first local default, when no `.env` file exists, is `paper-only`.
-5. Sign in using the `APP_PASSWORD` value. Open **Data & settings** to see broker prerequisites and import a current CSV instrument master. Configure any market-feed credentials in `backend/.env`, restart the backend, and check the feed state in the sidebar.
-6. Open **Data & settings** and import a current instrument-master CSV for the broker you want to use as the contract source. Then select the underlying, expiry and strike in **New paper trade**. You can select one or more brokers for separate simulations; nothing is sent to a broker. A live quote is optional; without one, enter the paper fill price.
-7. Open **Positions & trades** to add lots, partially exit a leg, exit a leg or close the strategy. For an exit, leaving the exit-price field blank uses the current stored mark; without quotes that mark remains the original paper fill assumption.
-8. Download the trade workbook from **Reports & exports**. Workbooks contain Trade Summary, P&L Timeline, Trade Events and Strategy Legs sheets. The JSONL journal is stored at `backend/OptionsTraderData/journal/events.jsonl` by default.
+## Development and recovery
 
-To update an existing Windows install, extract the new ZIP into the same parent folder and choose **Replace the files** when asked. The ZIP does not contain `backend/.env` or local database/report data, so they stay in place. The launcher closes a previous server started from that same project virtual environment before starting the updated app.
+Use Python 3.12 and the existing virtual environment. Backend dependencies are in `backend/requirements.txt`, with supported Kotak dependencies in `backend/requirements-brokers.txt`. Frontend scripts are in `frontend/package.json`. Production packaging is in `deploy/ramnaym`; environment templates are in `.env.example`. Never commit private environment files, database copies, OAuth tokens or credentials.
 
-### Manual startup commands
+The laptop workspace and old cloud records remain preserved. [START-HERE.md](START-HERE.md), [laptop export/companion recovery](docs/EXPORTS.md) and [existing laptop Drive backups](docs/GOOGLE-DRIVE-BACKUPS.md) describe earlier local workflows. They are separate from the new unattended cloud setup. Do not delete the old database until replacement data and recovery evidence are verified.
 
-```powershell
-cd backend
-py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env  # only the first time
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
+## Latest verified update — 29 October 2026
 
-In a second PowerShell window:
+- The Kotak feed, option-chain and responsive website update is published. The full isolated suite passed **543 tests**, and TypeScript/production builds passed.
+- Normal contract-selection changes use incremental subscriptions. Touch-line data retains LTP, best bid/ask, OI, volume and original timestamps. Unrelated chain quotes no longer copy the entire saved ledger.
+- A clearly labelled futures reference locates nearby option strikes when a fresh verified mark is available. It is not described as cash spot.
+- Four genuine open paper strategies survived the backend update. Closed trades can be removed from website history and performance, then restored through **Removed trades**; original exports and records remain preserved.
+- Sustained hosted live-feed CPU, recording/reconnection and complete Google backup acceptance must still be checked during applicable exchange sessions. Offline tests do not guarantee uninterrupted hosting or broker availability.
 
-```powershell
-cd frontend
-npm.cmd install
-npm.cmd run dev
-```
+## Repository contents and housekeeping
 
-Then open `http://127.0.0.1:5173`. Vite proxies `/api` and the WebSocket route to FastAPI. To use the React UI through FastAPI without Vite, run `npm.cmd run build` once; FastAPI serves `frontend/dist` when present. `start-windows.ps1` calls `npm.cmd` and recognizes a `node-v*-win-x64` portable Node folder extracted into the project root.
+`frontend/` holds the website; `backend/` holds the API, market-data engine, migrations and automated tests. `deploy/ramnaym/` builds the source-only server upload. `scripts/` and `companion/` retain installation, export and recovery tools.
 
-## Broker feed configuration
+Use [the deployment guide](docs/DEPLOYMENT.md) for the current Vercel/RamNaym connection. The retired Render deployment template has been removed; earlier versions remain in Git history.
 
-Use official broker documentation and the API program available on your own account. Broker requirements, subscriptions and permissions can change, so verify them before connecting.
-
-- **Dhan:** set `DHAN_CLIENT_ID` and a valid `DHAN_ACCESS_TOKEN`. DhanHQ v2's market feed is a binary WebSocket with exchange/security IDs; subscription messages allow up to 100 instruments and their docs describe a 5,000-instrument connection limit. This implementation uses ticker data. Dhan currently documents 24-hour access-token validity. [Dhan v2 Live Market Feed](https://dhanhq.co/docs/v2/live-market-feed/), [Dhan API releases](https://dhanhq.co/docs/v2/releases/).
-- **Kotak Neo:** set `KOTAK_CONSUMER_KEY`, `KOTAK_MOBILE_NUMBER`, `KOTAK_UCC`, `KOTAK_MPIN` and your backend-only `KOTAK_TOTP_SECRET`. The worker generates a current TOTP code at authentication time. New setup uses the maintained `kotakneoapi` v3 Python SDK and SFeed WebSocket. Do not follow setup guides for the retired `kotak-neo-api-v2` SDK or legacy callback market-data feed. [Official Kotak Neo Python SDK](https://github.com/Kotak-Neo/kotak-neo-python).
-- **5paisa:** set `FIVEPAISA_CLIENT_CODE` and a current `FIVEPAISA_ACCESS_TOKEN`. The App Key is used to obtain credentials in the broker's portal/API flow; access tokens expire and may need renewal. [5paisa Xstream WebSocket](https://xstream.5paisa.com/dev-docs/market-data-system/web-socket), [5paisa Xstream docs](https://xstream.5paisa.com/dev-docs/).
-
-MCX option masters are normalized to Dhan's `MCX_COMM`, Kotak Neo's `mcx_fo` and 5paisa's MCX exchange plus derivatives segment. The default `FEED_UNDERLYINGS` list includes common MCX roots; edit it in `backend/.env` to match the exact commodity root names in your broker master. Contract selection can show any imported option root, while live prices still depend on feed credentials and broker permissions.
-
-In **Data & settings**, import a CSV file downloaded from the selected broker. The importer recognizes common names such as `underlying_symbol`, `sem_underlying_symbol`, `expiry_date`/`sem_expiry_date`, `strike_price`/`sem_strike_price`, `option_type`, `lot_size`/`sem_lot_units`, `security_id`, and `scrip_code`. Check the number of imported contracts and search for an expected symbol before using the master. A contract file is only current as of its download time.
-
-Broker APIs may require account/API enrollment, market-data entitlements or session renewal. Their published limits may apply. The app reports connection and quote freshness; it cannot guarantee data delivery time or feed completeness. Timestamp precision is a representation detail, not a market-latency promise.
-
-## Security and mobile deployment
-
-For a Vercel website with a separate always-on backend, follow [VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md). The root `vercel.json` builds the mobile-ready PWA and proxies `/api/*` to the backend hostname you set there. The backend still needs persistent PostgreSQL and storage for the paper ledger and event journal.
-
-Do not expose the Windows development server to the public internet. For access away from home, deploy to an always-on server with a static public IP where broker APIs require it. A domain must point to the server and ports 80/443 must be reachable. Install Docker and Docker Compose, then:
-
-1. Copy `backend/.env.example` to `backend/.env`. Set a unique `APP_SECRET`, a strong `APP_PASSWORD`, and broker credentials. Do not commit this file.
-2. Create a root `.env` file with `DOMAIN=your.domain.example` and a long random `POSTGRES_PASSWORD`.
-3. Set `APP_PASSWORD_HASH` instead of `APP_PASSWORD` for production. Generate a PBKDF2 hash with `python -m app.password_hash` from `backend/`, then put the printed value in `backend/.env` as `APP_PASSWORD_HASH=...`; clear `APP_PASSWORD`.
-4. Run `docker compose up -d --build`. Caddy requests and renews HTTPS certificates. App sessions use secure cookies, PostgreSQL persists data, and the volume `/data` retains the event journal and Excel files.
-5. Open your HTTPS domain on Android. Use the browser's **Add to Home screen** option. The interface is responsive; the host and database must remain running for quotes and logging to continue.
-
-Hosting, domain and static-IP costs depend on the provider. Broker market-data/API fees, if applicable to your account, are separate. Confirm current requirements with each broker. Use the server's firewall to expose only SSH and HTTPS; do not publish PostgreSQL or port 8000. Back up both the PostgreSQL volume and `trader_data` volume. Restore the database first, then restore the `OptionsTraderData` journal/report directory.
-
-The local cookie is HttpOnly, SameSite strict and paired with a CSRF token. Login attempts are throttled per remote address. Set `COOKIE_SECURE=true` only when accessing through HTTPS. The live-trading feature flag is not consulted by any order route because there is no order route in this release.
-
-## Event journal and workbooks
-
-Each quote event received by an adapter is assigned a local UTC receive timestamp and appended to `journal/events.jsonl` with an fsync before the database write. When the backend starts, quote records absent from SQLite are restored from that journal. The database uses a transaction for paper actions, while each trade event is also appended to the journal. The app does not manufacture intermediate ticks or one-second snapshots.
-
-Excel is generated on export and finalized in a background thread when a strategy closes, rather than saving a workbook on every quote. The event journal remains the primary record; if Excel is locked, the journal and database continue to be available. The workbook writer replaces only the workbook for its own trade. CSV export and an operator-facing full journal rebuild UI are not included yet.
-
-The local directory layout is:
-
-```text
-OptionsTraderData/{Dhan|KotakNeo|5paisa}/YYYY/MM/Trade_<trade_id>/Trade_<trade_id>.xlsx
-OptionsTraderData/journal/events.jsonl
-```
-
-## Checks and test report
-
-Run the automated tests from `backend/`:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-The tests cover long/short P&L, option payoff, Dhan ticker packet decoding, 5paisa feed subscription shape, paper-only multi-broker creation, idempotent retries, broker-specific limit fills and cancellation, exit accounting, CSRF enforcement and workbook generation. Test databases and reports use an automatically cleaned temporary directory. The tests do not verify live broker authentication, current-account entitlements, live quote mapping, production server network policy, or mobile access through a deployed domain. Those require your broker accounts and hosted environment.
-
-## Troubleshooting
-
-- **Sign-in rejected:** check `APP_PASSWORD`/`APP_PASSWORD_HASH` and restart. A lockout after repeated failed attempts clears after five minutes.
-- **Broker remains disconnected:** check its required environment variables; verify token validity, account API enrollment and network access. Review the backend console/log output and broker's official API portal. Never paste a token into a browser field or support chat.
-- **Feed connected but no quotes:** import the correct broker's current option instrument master and verify that contracts for the intended underlying and segment were imported. Each broker token maps differently.
-- **Prices marked stale:** the source stopped sending updates or the market/contract has no recent provider event. The UI retains the last quote and labels its age; it does not convert that into a fresh value.
-- **Workbook not downloading:** close the workbook if Excel holds a lock, then export again. SQLite/JSONL data remains authoritative.
-- **Port already in use:** stop the existing `uvicorn` process or change the port in `start-windows.ps1` and the Vite proxy.
-- **Restore a missing quote event:** stop the service, back up the database, then restart; startup replays journaled quotes whose event keys are absent from SQLite. Do not edit the JSONL file while the service is running.
+Disposable test output and caches were cleaned locally. Private `.desktop/` state, local account databases, credentials, saved reports and recovery copies remain outside Git. Keep `.venv/` and frontend dependencies on the laptop while using its installed app. Do not upload the full laptop folder as a cloud release; use the allowlisted release packager.
